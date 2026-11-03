@@ -89,3 +89,45 @@ def starts_new_word(token):
     if byte and ord(first) >= 0x80:
         return False
     return first == SPACE_MARKER or first.isspace() or (first in PUNCTUATION and first not in APOSTROPHES)
+
+
+def word_start_terms(vocab):
+    """Token sequences that start a word, as counted by whole_word_count's
+    left boundary: a ▁-token whose next character is a letter or digit, or a
+    bare ▁ followed by a token starting with one (how Llama-2 writes numbers)."""
+    bare_space_id = vocab[SPACE_MARKER]
+    terms = []
+    for token, i in vocab.items():
+        if token.startswith(SPACE_MARKER) and len(token) > 1 and token[1].isalnum():
+            terms.append([i])
+        elif not token.startswith(SPACE_MARKER) and token[0].isalnum():
+            terms.append([bare_space_id, i])
+    return terms
+
+
+def total_word_count(index, vocab, post=post_json, terms_per_query=4, tokens_per_query=500):
+    """Number of words in the index: the summed counts of word_start_terms.
+    Each query counts an OR of at most terms_per_query terms and
+    tokens_per_query tokens (the API's limits are 4 and 500); the terms can't
+    overlap at a position, so the counts add up."""
+    total = 0
+    for batch in batches_within_limits(word_start_terms(vocab), terms_per_query, tokens_per_query):
+        payload = {"index": index, "query_type": "count", "query_ids": [batch]}
+        status, response = post(payload)
+        if status != 200 or "error" in response:
+            raise InfiniGramError(f"count query for terms {batch[0]}..{batch[-1]} failed "
+                                  f"(HTTP {status}): {response.get('error', response)}")
+        total += response["count"]
+    return total
+
+
+def batches_within_limits(terms, terms_per_batch, tokens_per_batch):
+    batch, batch_tokens = [], 0
+    for term in terms:
+        if batch and (len(batch) == terms_per_batch or batch_tokens + len(term) > tokens_per_batch):
+            yield batch
+            batch, batch_tokens = [], 0
+        batch.append(term)
+        batch_tokens += len(term)
+    if batch:
+        yield batch

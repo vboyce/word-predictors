@@ -4,7 +4,8 @@ from pathlib import Path
 import pytest
 
 from word_predictors.infini_gram import (PILE_TRAIN_INDEX, InfiniGramError, infini_gram_counts,
-                                         starts_new_word, whole_word_count)
+                                         starts_new_word, total_word_count, whole_word_count,
+                                         word_start_terms)
 
 RECORDED = json.loads((Path(__file__).parent / "data" / "infini_gram_responses.json").read_text())
 
@@ -91,3 +92,39 @@ def test_sampled_distribution_is_flagged_approx():
 def test_live_api_matches_recorded_response():
     counts, _ = infini_gram_counts({("the", "cat", "sat")}, PILE_TRAIN_INDEX)
     assert counts == {("the", "cat", "sat"): 531}
+
+
+VOCAB = {"<unk>": 0, "▁the": 1, "▁(": 2, "▁": 3, "the": 4, "5": 5, "(": 6, "<0xE2>": 7,
+         "▁▁": 8, "▁é": 9, "é": 10}
+
+
+def test_word_start_terms_are_space_then_letter_or_digit():
+    terms = word_start_terms(VOCAB)
+    # "▁the", "▁é"; and a bare space before a token starting with a letter or digit
+    assert sorted(terms) == sorted([[1], [9], [3, 4], [3, 5], [3, 10]])
+
+
+def test_total_word_count_sums_the_counts_of_all_word_start_terms():
+    term_counts = {(1,): 100, (9,): 7, (3, 4): 2, (3, 5): 30, (3, 10): 1}
+    queries = []
+
+    def post(payload):
+        queries.append(payload)
+        assert (payload["index"], payload["query_type"]) == (PILE_TRAIN_INDEX, "count")
+        (clause,) = payload["query_ids"]  # one clause: an OR of terms
+        return 200, {"count": sum(term_counts[tuple(term)] for term in clause), "approx": True}
+
+    total = total_word_count(PILE_TRAIN_INDEX, VOCAB, post=post, terms_per_query=2, tokens_per_query=3)
+
+    assert total == 140
+    # The API limits a query's terms and tokens; a bare-space pair is two tokens.
+    assert all(len(query["query_ids"][0]) <= 2 for query in queries)
+    assert all(sum(len(term) for term in query["query_ids"][0]) <= 3 for query in queries)
+
+
+def test_total_word_count_error_raises():
+    def post(payload):
+        return 400, {"error": "query too long"}
+
+    with pytest.raises(InfiniGramError, match="query too long"):
+        total_word_count(PILE_TRAIN_INDEX, VOCAB, post=post, terms_per_query=2, tokens_per_query=3)

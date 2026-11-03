@@ -9,7 +9,7 @@ from transformers import (AutoModelForCausalLM, AutoTokenizer, GPT2Config, GPTNe
 
 from tiny_lm import (MAX_POSITIONS, hand_surprisal, make_whitespace_stripping_tokenizer,
                      save_tiny_lm)
-from word_predictors.contextual_surprisal import (context_window, contextual_surprisal,
+from word_predictors.contextual_surprisal import (contextual_surprisal, model_context_window,
                                                       load_causal_lm)
 
 KID_MAZE_GPT2 = Path(__file__).parent / "data" / "kid_maze_gpt2_surprisal.csv"
@@ -37,15 +37,15 @@ def tiny_lm(tmp_path_factory):
     return tokenizer, model
 
 
-def brute_force_story(words, tokenizer, model, window_stride):
+def brute_force_story(words, tokenizer, model, window_stride, window=MAX_POSITIONS):
     """Expected (surprisal, n_tokens) per word, one forward pass per token.
-    Windows of MAX_POSITIONS tokens start every window_stride tokens; token i
-    is scored in the first window that contains it."""
+    Windows of `window` tokens start every window_stride tokens; token i is
+    scored in the first window that contains it."""
     word_tokens = [tokenizer.encode(w if i == 0 else " " + w) for i, w in enumerate(words)]
     ids = [tokenizer.bos_token_id] + [t for tokens in word_tokens for t in tokens]
     token_surprisals = [None]
     for i in range(1, len(ids)):
-        window_start = max(0, math.ceil((i + 1 - MAX_POSITIONS) / window_stride)) * window_stride
+        window_start = max(0, math.ceil((i + 1 - window) / window_stride)) * window_stride
         token_surprisals.append(hand_surprisal(model, ids[window_start:i], ids[i]))
     expected, position = [], 1
     for tokens in word_tokens:
@@ -89,23 +89,23 @@ def test_gpt2_reproduces_kid_maze_word_predictors():
 
 
 def test_context_window_from_gpt2_style_config():
-    assert context_window(GPT2Config(n_positions=1024)) == 1024
+    assert model_context_window(GPT2Config(n_positions=1024)) == 1024
 
 
 def test_context_window_from_neox_style_config():
-    assert context_window(GPTNeoXConfig(max_position_embeddings=2048)) == 2048
+    assert model_context_window(GPTNeoXConfig(max_position_embeddings=2048)) == 2048
 
 
 def test_context_window_missing_from_config_raises():
     with pytest.raises(ValueError, match="context window"):
-        context_window(PretrainedConfig())
+        model_context_window(PretrainedConfig())
 
 
 def test_context_window_conflicting_in_config_raises():
     # A plain config: GPT2Config aliases max_position_embeddings to n_positions.
     config = PretrainedConfig(n_positions=1024, max_position_embeddings=2048)
     with pytest.raises(ValueError, match="context window"):
-        context_window(config)
+        model_context_window(config)
 
 
 @pytest.mark.parametrize("window_stride", [0, MAX_POSITIONS])
@@ -162,3 +162,22 @@ def test_load_causal_lm_from_missing_subfolder_raises(tmp_path):
     save_tiny_lm(tmp_path / "seed0" / "rung1M")
     with pytest.raises(FileNotFoundError, match="no_such_rung"):
         load_causal_lm(str(tmp_path), subfolder="seed0/no_such_rung")
+
+
+def test_context_window_shorter_than_config_matches_brute_force(tiny_lm):
+    # e.g. TinyStories-33M: config says 2048 positions, trained with 512.
+    tokenizer, model = tiny_lm
+
+    rows = contextual_surprisal(STORY_ROWS, tokenizer, model, window_stride=2, context_window=4)
+
+    words = [r["word"] for r in STORY_ROWS if r["topic"] == "pets"]
+    expected = brute_force_story(words, tokenizer, model, window_stride=2, window=4)
+    got = [r["surprisal"] for r in rows if r["topic"] == "pets"]
+    assert got == pytest.approx([s for s, _ in expected], abs=TOLERANCE_BITS)
+
+
+def test_context_window_longer_than_config_raises(tiny_lm):
+    tokenizer, model = tiny_lm
+    with pytest.raises(ValueError, match="context_window"):
+        contextual_surprisal(STORY_ROWS, tokenizer, model, window_stride=2,
+                             context_window=MAX_POSITIONS + 1)

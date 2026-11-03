@@ -20,6 +20,7 @@ by the task.
 | `tests/` | reusable |
 | `docs/` | notes |
 | `script/` | test runners (`script/test`); edit only when asked |
+| `corpora/` | readonly (downloaded corpora; only `corpora/download.sh` writes; files gitignored) |
 
 ## Running things
 

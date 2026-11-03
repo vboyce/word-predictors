@@ -30,7 +30,7 @@ from collections import namedtuple
 
 import torch
 
-from word_predictors.contextual_surprisal import context_window
+from word_predictors.contextual_surprisal import model_context_window
 from word_predictors.punctuation import APOSTROPHES, PUNCTUATION, strip_punctuation
 
 SPACE_MARKER = "Ġ"
@@ -48,7 +48,7 @@ def unigram_surprisal(words, tokenizer, model, n_samples, max_tokens, seed):
     order, with word, unigram_surprisal, and the sampling settings."""
     if n_samples < 1:
         raise ValueError(f"n_samples must be at least 1, got {n_samples}")
-    window = context_window(model.config)
+    window = model_context_window(model.config)
     if not 0 < max_tokens < window:
         raise ValueError(f"max_tokens must be between 1 and {window - 1} "
                          f"(BOS plus max_tokens must fit in the context window), got {max_tokens}")

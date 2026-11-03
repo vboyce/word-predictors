@@ -35,7 +35,7 @@ def load_causal_lm(model_name, subfolder=""):
     return tokenizer, model
 
 
-def context_window(config):
+def model_context_window(config):
     """The maximum number of tokens the model can take, from its config."""
     values = {
         attribute: getattr(config, attribute)
@@ -50,14 +50,22 @@ def context_window(config):
     return next(iter(values.values()))
 
 
-def contextual_surprisal(word_rows, tokenizer, model, window_stride):
+def contextual_surprisal(word_rows, tokenizer, model, window_stride, context_window=None):
     """Surprisal for every word in word_rows (dicts with topic, sentence,
     word_position, word). Returns one dict per word, stories in order of first
     appearance and words in reading order, with topic, sentence and
-    word_position (as int), word, surprisal (bits) and n_tokens."""
+    word_position (as int), word, surprisal (bits) and n_tokens.
+
+    context_window: the longest sequence to score, if the model was trained on
+    shorter sequences than its config allows (TinyStories-33M: 512 of 2048);
+    otherwise the config's."""
     if tokenizer.bos_token_id is None:
         raise ValueError(f"tokenizer {tokenizer.name_or_path!r} has no BOS token to start a story with")
-    window = context_window(model.config)
+    window = model_context_window(model.config)
+    if context_window is not None:
+        if context_window > window:
+            raise ValueError(f"context_window {context_window} is longer than the model's {window}")
+        window = context_window
     if not 0 < window_stride < window:
         raise ValueError(f"window_stride must be between 1 and {window - 1}, got {window_stride}")
 
