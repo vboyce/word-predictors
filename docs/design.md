@@ -35,7 +35,10 @@ Input: stories as words in order (columns `topic, sentence, word_position, word`
 Tokenizer schemes (checked 2026-11-03, from the local HF cache; the Hub was unreachable):
 `gpt2`, `EleutherAI/pythia-70m` and `roneneldan/TinyStories-33M` all use byte-level BPE with
 Ġ-marked spaces, BOS = `<|endoftext|>`, and add no special tokens on `encode`. Context window:
-GPT-2 1024 (`n_positions`), Pythia and TinyStories 2048 (`max_position_embeddings`).
+GPT-2 1024 (`n_positions`), Pythia and TinyStories 2048 (`max_position_embeddings`). **But
+TinyStories-33M was trained with `context_length=512`** (its model card), so positions past 512
+are untrained: pass `contextual_surprisal(..., context_window=512)`. The config can't show
+this; other models' training lengths aren't checked.
 `mcxfrank/childes-gpt2-ladder` holds 180 models in subfolders `development/seed{S}/rung{B}/`
 (10 seeds × 18 budgets, 0.5M–24M words; load with `load_causal_lm(name, subfolder=...)`); the
 24M seed-42 tokenizer is the same Ġ scheme, BOS = EOS = `<|endoftext|>` (id 0), 52k vocab,
@@ -139,11 +142,23 @@ Boundary rules compared: the unigram estimator and infini-gram need a space befo
 (left) and whitespace/punctuation after it (right). Local corpus counts strip outer punctuation
 on both sides, so they also count '"The' and line-initial words. Not yet made identical.
 
-**Open: total words for the Pile.** Stupid Backoff's unigram level is count(w) / total words,
-and the index reports total *tokens* (383.3B), not words. Using tokens shifts unigram-level
-scores by a constant, but only for n-grams that back off to the unigram, so it isn't a
-harmless offset. Options: an estimate from the share of ▁-initial tokens (one `ntd` query on
-the empty prompt, sampled from 1000 tokens), or a published Pile word count.
+**Total words for the Pile (estimate; open whether to use it).** Stupid Backoff's unigram
+level is count(w) / total words, and the index reports total *tokens* (383.3B), not words.
+Michaelov & Levy divide by total tokens. Using tokens adds a constant to unigram-level scores,
+but only for n-grams that back off to the unigram, so it isn't a harmless offset.
+- No published word count: the Pile paper (arXiv 2101.00027) gives bytes and GPT-2 tokens per
+  byte (0.29335); its datasheet (arXiv 2201.07311) gives document counts.
+- Estimate from the empty-prompt `ntd` (a fixed, weighted sample of 1000 tokens; the same sample
+  every time): word-start tokens (▁ then a letter or digit) are 45.6% of tokens (SE ≈ 1.6
+  points) → **≈ 175B words** (95% CI ≈ 163–187B); counting every bare ▁ (often before digits)
+  as a word start too gives 47.2% → 181B. Tokens instead of words would add log2(1/0.456) =
+  1.13 bits to every unigram-level score.
+- Exact count: `infini_gram.total_word_count` sums exact counts of all 30,197 word-start terms
+  of the Llama-2 vocabulary (16,054 ▁-letter/digit tokens, 14,143 bare-▁ pairs). The API allows
+  4 terms per OR clause and 500 tokens per query: ~7,550 queries. Run unpaced on 2026-11-03,
+  it got **HTTP 403 Forbidden** partway (likely rate limiting); not re-run. At 1 query/s it
+  would take ~2 hours. OR counts are flagged `approx: true`, though a 2-term OR equalled the sum
+  of the exact single counts (`▁the` + `▁cat`).
 
 ## Contextual surprisal (implemented)
 
@@ -168,11 +183,26 @@ Local corpora: count whole words directly.
 Attached punctuation: stripped for n-gram counts (like `length` and `zipf_frequency` now);
 kept for contextual surprisal (as the LM sees it). Punctuation counts as a right boundary.
 
-## Fail loudly (differences from Michaelov & Levy's code)
+## Michaelov & Levy (2026), as their code does it
 
-- No bare `except`/retry loops. An API error stops the run with the query that failed.
-- A word with zero corpus count: their code silently uses count 1. Here: decision needed (see
-  below); whichever it is, the output records the raw count so it's visible.
+From `code/get_ngrams.py` and `stimuli/luke_2018_dl.stims` in their OSF project
+(https://osf.io/msuwk; read 2026-11-03). The paper itself only says "raw counts of word
+sequences in the corpus as calculated by infini-gram" with Stupid Backoff, following
+Michaelov et al. (2025).
+- Counts: infini-gram `count` of the text, so token sequences: no right boundary ("cat" counts
+  "catastrophe"); left boundary only through the ▁ the tokenizer adds (line-initial missed).
+- Unigram denominator: total **tokens** (`count` of the empty query).
+- Zero unigram count: replaced by 1.
+- Punctuation: kept. The stimuli are the text up to each word, punctuation attached ("...on
+  your *phone.*"), so a target "phone." is queried as `▁phone .`.
+- Context: the last n−1 words of the whole text so far, so it crosses sentence boundaries;
+  the first word of the text gets only a unigram.
+- α = 0.4; orders 1–5; 4 count queries per word and order (n-gram and context), no caching.
+- Errors: bare `except` with up to 1000 retries; on final failure it prints a message and
+  skips the row, so a word can silently be missing from the output.
+
+Differences here: whole-word counts (right boundary), total words not tokens (open),
+punctuation stripped, context within sentences, zero counts left visible (open), no retries.
 
 ## Tests (plan)
 
