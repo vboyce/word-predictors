@@ -70,6 +70,23 @@ rows of the output layer. Rough estimate for GPT-2 at N = 500, L = 50, W = 400: 
 multiply-adds, i.e. days on a laptop CPU, minutes to tens of minutes on a GPU (not measured).
 Run on Engaging.
 
+## N-gram surprisal from local counts (implemented; infini-gram not yet)
+
+`word_predictors.ngram_surprisal`: `needed_ngrams(word_rows, max_order)` lists the n-grams the
+stories need; `count_ngrams(lines, ngrams)` counts only those in a corpus (one pass; a full
+5-gram table for a 100M-word corpus wouldn't fit in memory); `ngram_surprisal(word_rows,
+counts, total_words, max_order, alpha)` gives one row per word and order, with the n-gram
+used, `ngram_count`, `context_count`, `unigram_count`, `total_words`, `alpha`. `alpha` is
+required. Choices made in code (check these):
+- Counts are **case-sensitive** (as infini-gram and the LMs are): sentence-initial "The" and
+  "the" are different words.
+- Outer punctuation stripped with the same characters as kid-maze's `strip_punctuation`
+  (hyphens kept); corpus tokens that are only punctuation are dropped, so "the ... cat"
+  counts as the bigram "the cat".
+- Corpus n-grams don't cross line boundaries (the corpora's sentence splitting not checked yet).
+- A word with unigram count 0 gets no surprisal (None), with its zero counts in the output;
+  the zero-count rule stays open (below).
+
 ## Contextual surprisal (implemented)
 
 `word_predictors.contextual_surprisal.contextual_surprisal(word_rows, tokenizer, model,
