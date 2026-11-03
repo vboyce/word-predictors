@@ -113,6 +113,8 @@ From the API docs (infini-gram.readthedocs.io/en/latest/api.html) and a few live
 
 Options for whole-word counts (**decided 2026-11-03: option 2**; first words of sentences
 don't matter for the analysis, so the missed line-initial forms are acceptable):
+lowercase words lose little: after a newline, "the" occurs 41,559,108 times vs. 9,229,350,572
+after a space (0.45%); "dinosaurs" 3,544 vs. 440,540 (0.8%) (token-sequence counts, 2026-11-03).
 1. As Michaelov & Levy: plain text queries; both boundary problems ignored.
 2. Right boundary from `ntd`: count × share of continuations that start a new word
    (▁-token, punctuation, newline/whitespace byte, or document end). Exact when the n-gram
