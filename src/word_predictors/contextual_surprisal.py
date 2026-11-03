@@ -19,10 +19,12 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 CONTEXT_WINDOW_ATTRIBUTES = ["n_positions", "max_position_embeddings"]
 
 
-def load_causal_lm(model_name):
-    """Return (tokenizer, model) for a Hugging Face causal LM, in eval mode."""
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForCausalLM.from_pretrained(model_name)
+def load_causal_lm(model_name, subfolder=""):
+    """Return (tokenizer, model) for a Hugging Face causal LM, in eval mode.
+    subfolder is for repos holding several models, e.g.
+    mcxfrank/childes-gpt2-ladder's "development/seed42/rung24M"."""
+    tokenizer = AutoTokenizer.from_pretrained(model_name, subfolder=subfolder)
+    model = AutoModelForCausalLM.from_pretrained(model_name, subfolder=subfolder)
     model.eval()
     return tokenizer, model
 

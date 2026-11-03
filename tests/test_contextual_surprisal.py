@@ -146,3 +146,13 @@ def test_duplicate_word_position_raises(tiny_lm):
     tokenizer, model = tiny_lm
     with pytest.raises(ValueError, match="duplicate"):
         contextual_surprisal(STORY_ROWS + STORY_ROWS[:1], tokenizer, model, window_stride=3)
+
+
+def test_load_causal_lm_from_subfolder(tmp_path):
+    save_tiny_lm(tmp_path / "seed0" / "rung1M")
+
+    tokenizer, model = load_causal_lm(str(tmp_path), subfolder="seed0/rung1M")
+
+    assert model.config.n_positions == MAX_POSITIONS
+    assert not model.training
+    assert tokenizer.bos_token == "<|endoftext|>"

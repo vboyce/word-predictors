@@ -35,9 +35,12 @@ Input: stories as words in order (columns `topic, sentence, word_position, word`
 Tokenizer schemes (checked 2026-11-03, from the local HF cache; the Hub was unreachable):
 `gpt2`, `EleutherAI/pythia-70m` and `roneneldan/TinyStories-33M` all use byte-level BPE with
 Ġ-marked spaces, BOS = `<|endoftext|>`, and add no special tokens on `encode`. Context window:
-GPT-2 1024 (`n_positions`), Pythia and TinyStories 2048 (`max_position_embeddings`). Not checked
-yet: `mcxfrank/childes-gpt2-ladder` (not cached; its tokenizer didn't load from the repo root,
-maybe it's in a per-budget subfolder) and the BabyLM baselines (repo names not chosen).
+GPT-2 1024 (`n_positions`), Pythia and TinyStories 2048 (`max_position_embeddings`).
+`mcxfrank/childes-gpt2-ladder` holds 180 models in subfolders `development/seed{S}/rung{B}/`
+(10 seeds × 18 budgets, 0.5M–24M words; load with `load_causal_lm(name, subfolder=...)`); the
+24M seed-42 tokenizer is the same Ġ scheme, BOS = EOS = `<|endoftext|>` (id 0), 52k vocab,
+context 1024. Which seed(s) to use is open. Not checked yet: the BabyLM baselines (repo names
+not chosen).
 Word-boundary detection for the unigram estimator must handle whichever schemes these use, and
 fail loudly on a tokenizer it doesn't recognize.
 
@@ -86,6 +89,36 @@ required. Choices made in code (check these):
 - Corpus n-grams don't cross line boundaries (the corpora's sentence splitting not checked yet).
 - A word with unigram count 0 gets no surprisal (None), with its zero counts in the output;
   the zero-count rule stays open (below).
+
+## infini-gram (checked 2026-11-03; client not written, decision needed)
+
+From the API docs (infini-gram.readthedocs.io/en/latest/api.html) and a few live queries:
+- The Pile-train index is `v4_piletrain_llama`: 383.3B tokens, tokenized with **Llama-2's**
+  SentencePiece tokenizer (▁ marks a space), not Pythia's.
+- `count` of an n-gram is exact. `ntd` (next-token distribution) is **sampled** from 1000
+  occurrences when the context occurs more than 1000 times (`approx: true`); `cont_cnt` is then
+  scaled, in steps of `prompt_cnt / 1000`.
+- Errors come back as JSON with an `error` key. No rate limit is stated.
+- **Right boundary matters a lot.** `count("cat")` = 9,434,100 counts the token `▁cat`, but
+  its top continuations are `ast`, `ar`, `abol` (catastrophe, catalog, catabolism), so most of
+  those aren't the word "cat". For "the cat sat" (532 occurrences, exact `ntd`) nearly all
+  continuations are word starts.
+- **Left boundary matters too.** After a newline, a word has no ▁: `<0x0A> The` occurs
+  298,141,899 times vs. `<0x0A> ▁The` 4,013,977, and `▁The` 770,633,186 overall. A text query
+  "The" matches only `▁The`, so it misses ~28% of "The" (most line-initial words). Michaelov &
+  Levy's text queries have both problems.
+
+Options for whole-word counts (to decide):
+1. As Michaelov & Levy: plain text queries; both boundary problems ignored.
+2. Right boundary from `ntd`: count × share of continuations that start a new word
+   (▁-token, punctuation, newline/whitespace byte, or document end). Exact when the n-gram
+   occurs ≤ 1000 times, sampled otherwise (standard error of the share ≤ 1.6 points).
+   Left boundary still ▁-only.
+3. As 2, plus the no-▁ form after a newline (and other whitespace/quote tokens): more
+   queries per n-gram, and the left-context rule has to be spelled out.
+Each needed n-gram is one `ntd` query (`prompt_cnt` is its exact count): ~3000 queries for the
+two kid-maze stories at n ≤ 5. The local-corpus counts should then use the same boundary rule
+(now: whitespace-separated, outer punctuation stripped).
 
 ## Contextual surprisal (implemented)
 
