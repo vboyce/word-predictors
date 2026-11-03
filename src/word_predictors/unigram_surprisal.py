@@ -21,6 +21,7 @@ Supports tokenizers that mark a preceding space on the following token, like
 GPT-2's and Pythia's byte-level BPE ("Ġcat"); anything else raises.
 """
 
+import copy
 import math
 
 import torch
@@ -28,10 +29,10 @@ import torch
 from word_predictors.contextual_surprisal import context_window
 
 SPACE_MARKER = "Ġ"
-# Batch sizes bound memory: scoring holds logits over the whole vocabulary at
-# every position of every sequence in the batch (32 x 50 x 50k floats is 320 MB).
+# Batch sizes bound memory: scoring holds a KV cache per word in the batch and
+# logits over the whole vocabulary for each token of each word.
 SAMPLES_PER_BATCH = 256
-SEQUENCES_PER_BATCH = 32
+WORDS_PER_BATCH = 64
 
 
 def unigram_surprisal(words, tokenizer, model, n_samples, max_tokens, seed):
@@ -49,12 +50,12 @@ def unigram_surprisal(words, tokenizer, model, n_samples, max_tokens, seed):
     strings = sample_strings(model, tokenizer.bos_token_id, tokenizer.eos_token_id,
                              n_samples, max_tokens, seed)
     total_words = sum(complete_word_count(string, tokenizer) for string in strings)
+    occurrences = expected_occurrences(strings, words, tokenizer, model, max_tokens)
     rows = []
     for word in words:
-        occurrences = sum(expected_occurrences(strings, word, tokenizer, model, max_tokens))
         rows.append({
             "word": word,
-            "unigram_surprisal": -math.log2(occurrences / total_words),
+            "unigram_surprisal": -math.log2(sum(occurrences[word]) / total_words),
             "n_samples": n_samples,
             "max_tokens": max_tokens,
             "seed": seed,
@@ -122,46 +123,65 @@ def complete_word_count(string, tokenizer):
     return n_word_starts if ended else max(n_word_starts - 1, 0)
 
 
-def expected_occurrences(strings, word, tokenizer, model, max_tokens):
-    """For each string, the sum over its prefixes of P(word's canonical tokens,
-    then a word start or EOS | prefix): the expected number of occurrences of
-    word given the string's prefixes."""
-    start_form, space_form = canonical_forms(word, tokenizer)
+def expected_occurrences(strings, words, tokenizer, model, max_tokens):
+    """{word: [for each string, the sum over its prefixes of P(word's canonical
+    tokens, then a word start or EOS | prefix)]}: the expected number of
+    occurrences of each word given each string's prefixes."""
+    forms = {word: canonical_forms(word, tokenizer) for word in words}
     boundary_ids = sorted(word_start_ids(tokenizer) | {tokenizer.eos_token_id})
-    sequences, owners = [], []
+    totals = {word: [0.0] * len(strings) for word in words}
     for string_index, string in enumerate(strings):
-        prefix_limit = len(string) - 1 if string[-1] == tokenizer.eos_token_id else len(string)
-        for prefix_length in range(prefix_limit + 1):
-            forms = [start_form, space_form] if prefix_length == 0 else [space_form]
-            for form in forms:
-                if prefix_length + len(form) + 1 <= max_tokens:  # the boundary token must fit
-                    sequences.append(([tokenizer.bos_token_id] + string[:prefix_length], form))
-                    owners.append(string_index)
-    totals = [0.0] * len(strings)
-    for batch_start in range(0, len(sequences), SEQUENCES_PER_BATCH):
-        batch = sequences[batch_start:batch_start + SEQUENCES_PER_BATCH]
-        probabilities = word_then_boundary_probabilities(batch, model, boundary_ids,
-                                                         tokenizer.eos_token_id)
-        for owner, probability in zip(owners[batch_start:], probabilities):
-            totals[owner] += probability
+        ended = string[-1] == tokenizer.eos_token_id
+        prefix_tokens = string[:-1] if ended else string
+        for batch_start in range(0, len(words), WORDS_PER_BATCH):
+            batch = words[batch_start:batch_start + WORDS_PER_BATCH]
+            # Only at the start of the string can the word come without a leading space.
+            at_start = summed_over_prefixes([], [forms[w][0] for w in batch],
+                                            tokenizer, model, boundary_ids, max_tokens)
+            after_space = summed_over_prefixes(prefix_tokens, [forms[w][1] for w in batch],
+                                               tokenizer, model, boundary_ids, max_tokens)
+            for word, start_total, space_total in zip(batch, at_start, after_space):
+                totals[word][string_index] += start_total + space_total
     return totals
 
 
-def word_then_boundary_probabilities(batch, model, boundary_ids, pad_id):
-    """P(form, then one of boundary_ids | context) for each (context, form) in batch."""
-    full = [context + form for context, form in batch]
-    length = max(len(ids) for ids in full)
+def summed_over_prefixes(prefix_tokens, forms, tokenizer, model, boundary_ids, max_tokens):
+    """For each form, the sum over j = 0..len(prefix_tokens) of P(form, then
+    one of boundary_ids | BOS + prefix_tokens[:j]), counting only the j where
+    the form and its boundary token fit in max_tokens."""
+    # Every row of the batch carries the same prefix, so the prefix's KV cache
+    # is built once, one token at a time, and each prefix scores all forms at once.
+    n_forms = len(forms)
+    longest = max(len(form) for form in forms)
     # Right padding needs no attention mask: a causal LM's logits at a
     # position don't depend on later tokens.
-    padded = torch.tensor([ids + [pad_id] * (length - len(ids)) for ids in full], device=model.device)
-    with torch.no_grad():
-        logits = model(padded).logits
-    results = []
-    for row, (context, form) in enumerate(batch):
-        # The positions whose next-token distributions predict the word's tokens, then the boundary.
-        first = len(context) - 1
-        log_probs = torch.log_softmax(logits[row, first:first + len(form) + 1].double(), dim=-1)
-        log_probability = sum(log_probs[i, token].item() for i, token in enumerate(form))
-        boundary = torch.logsumexp(log_probs[len(form), boundary_ids], dim=0)
-        results.append(math.exp(log_probability + boundary.item()))
-    return results
+    padded_forms = torch.tensor([form + [tokenizer.eos_token_id] * (longest - len(form))
+                                 for form in forms], device=model.device)
+    form_lengths = [len(form) for form in forms]
+    totals = [0.0] * n_forms
+    cache = None
+    for prefix_length in range(len(prefix_tokens) + 1):
+        fits = [prefix_length + length + 1 <= max_tokens for length in form_lengths]
+        if not any(fits):
+            break
+        last_token = tokenizer.bos_token_id if prefix_length == 0 else prefix_tokens[prefix_length - 1]
+        with torch.no_grad():
+            prefix_output = model(torch.full((n_forms, 1), last_token, device=model.device),
+                                  past_key_values=cache, use_cache=True)
+            cache = prefix_output.past_key_values
+            form_logits = model(padded_forms, past_key_values=copy.deepcopy(cache)).logits
+        # Position i predicts the form's token i; position len(form) predicts the boundary.
+        logits = torch.cat([prefix_output.logits[:, -1:], form_logits], dim=1)
+        for row, form in enumerate(forms):
+            if fits[row]:
+                totals[row] += word_then_boundary_probability(logits[row], form, boundary_ids)
+    return totals
+
+
+def word_then_boundary_probability(logits, form, boundary_ids):
+    """P(form, then one of boundary_ids), from logits whose position i predicts
+    the form's token i and position len(form) the token after it."""
+    log_probs = torch.log_softmax(logits[:len(form) + 1].double(), dim=-1)
+    log_probability = sum(log_probs[i, token].item() for i, token in enumerate(form))
+    boundary = torch.logsumexp(log_probs[len(form), boundary_ids], dim=0)
+    return math.exp(log_probability + boundary.item())

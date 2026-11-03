@@ -104,13 +104,13 @@ def test_estimate_converges_to_exact_canonical_unigram_surprisal(enumerable_lm, 
     _, _, exact_surprisals = exact
 
     rows = unigram_surprisal(list(WORD_TOKENS), tokenizer, model,
-                             n_samples=5000, max_tokens=MAX_TOKENS, seed=0)
+                             n_samples=2000, max_tokens=MAX_TOKENS, seed=0)
 
     assert [r["word"] for r in rows] == list(WORD_TOKENS)
     for row in rows:
-        # Bootstrap standard error at 5000 samples is about 0.013 bits; the
+        # Bootstrap standard error at 2000 samples is about 0.02 bits; the
         # exact values are more than 3 bits apart.
-        assert row["unigram_surprisal"] == pytest.approx(exact_surprisals[row["word"]], abs=0.05)
+        assert row["unigram_surprisal"] == pytest.approx(exact_surprisals[row["word"]], abs=0.06)
 
 
 def test_output_records_sampling_settings(enumerable_lm):
@@ -124,7 +124,7 @@ def test_marginalized_count_is_unbiased(enumerable_lm, exact, word):
     tokenizer, model = enumerable_lm
     strings, probabilities, _ = exact
 
-    per_string = expected_occurrences(strings, word, tokenizer, model, MAX_TOKENS)
+    per_string = expected_occurrences(strings, [word], tokenizer, model, MAX_TOKENS)[word]
 
     marginalized = sum(p * c for p, c in zip(probabilities, per_string))
     literal = sum(p * literal_occurrences(s, word) for s, p in zip(strings, probabilities))

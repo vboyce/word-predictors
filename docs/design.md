@@ -41,7 +41,7 @@ maybe it's in a per-budget subfolder) and the BabyLM baselines (repo names not c
 Word-boundary detection for the unigram estimator must handle whichever schemes these use, and
 fail loudly on a tokenizer it doesn't recognize.
 
-## Unigram surprisal (implemented, too slow for real runs yet)
+## Unigram surprisal (implemented; real runs need a GPU)
 
 `word_predictors.unigram_surprisal.unigram_surprisal(words, tokenizer, model, n_samples,
 max_tokens, seed)`. Definitions as built (check these):
@@ -62,11 +62,13 @@ Tests: exact unbiasedness of the marginalized count against enumerating every st
 7-token model, and convergence to the exact surprisal (error < 1 bootstrap SE at N = 2000 and
 20000).
 
-**Cost, to fix before real runs:** one forward pass per (sample, prefix, word): N × L × W
-sequences. On CPU, 20 samples × 50 tokens × 2 words took 3–5 minutes with GPT-2/Pythia-70m;
-N = 500, L = 50, ~400 words would take days. Options: one pass per sampled string gives every
-word's first-token probability at every prefix at once; only multi-token words and the
-boundary after each word need extra passes, which can reuse the sample's KV cache.
+**Cost.** Each prefix's KV cache is built once per string and scores a batch of words at once
+(2× faster than one pass per (sample, prefix, word): GPT-2, 4 samples × 12 tokens × 20 words,
+22.9 s → 12.0 s on 2 CPU threads, same values to 2e-5 bits). What remains is intrinsic: a
+full-vocabulary distribution at every (prefix, word, word token), about N × L × W × (k + 1)
+rows of the output layer. Rough estimate for GPT-2 at N = 500, L = 50, W = 400: ~1e15
+multiply-adds, i.e. days on a laptop CPU, minutes to tens of minutes on a GPU (not measured).
+Run on Engaging.
 
 ## Contextual surprisal (implemented)
 
