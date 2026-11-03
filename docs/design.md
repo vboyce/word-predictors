@@ -48,10 +48,13 @@ fail loudly on a tokenizer it doesn't recognize.
 
 `word_predictors.unigram_surprisal.unigram_surprisal(words, tokenizer, model, n_samples,
 max_tokens, seed)`. Definitions as built (check these):
-- A word starts at the start of a string or at a Ġ-token, and ends before the next Ġ-token or
-  EOS (Hopton App. C). So **attached punctuation is part of the word**: "sat." is not an
-  occurrence of "sat". Whether to pass words with or without punctuation, or to make punctuation
-  a right boundary (as planned for n-grams), is **still open**.
+- A word starts at the start of a string or at a Ġ-token (Hopton App. C). It ends before EOS
+  or a token whose text starts with whitespace (space, newline) or punctuation other than an
+  apostrophe (decided 2026-11-03; Hopton's rule is Ġ-token or EOS only, and the paper doesn't
+  discuss punctuation). So "sat." is an occurrence of "sat"; "cat's" is not one of "cat"; a
+  line-final word counts. A span starting with punctuation ('"The') is not a word, in the
+  numerator or the denominator. Words are passed without outer punctuation (an error
+  otherwise); a word whose tokens contain a boundary ("e.g") raises.
 - At the start of a sampled string the word may appear with or without a leading space; both
   canonical forms are counted.
 - Strings cut off at `max_tokens` have an incomplete last word: it counts in neither the
@@ -108,7 +111,8 @@ From the API docs (infini-gram.readthedocs.io/en/latest/api.html) and a few live
   "The" matches only `▁The`, so it misses ~28% of "The" (most line-initial words). Michaelov &
   Levy's text queries have both problems.
 
-Options for whole-word counts (to decide):
+Options for whole-word counts (**decided 2026-11-03: option 2**; first words of sentences
+don't matter for the analysis, so the missed line-initial forms are acceptable):
 1. As Michaelov & Levy: plain text queries; both boundary problems ignored.
 2. Right boundary from `ntd`: count × share of continuations that start a new word
    (▁-token, punctuation, newline/whitespace byte, or document end). Exact when the n-gram

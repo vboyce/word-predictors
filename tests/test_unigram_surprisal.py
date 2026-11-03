@@ -4,19 +4,23 @@ import pytest
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from tiny_lm import ENUMERABLE_VOCAB, make_whitespace_stripping_tokenizer, save_enumerable_lm
+from tiny_lm import (ENUMERABLE_VOCAB, make_tokenizer, make_whitespace_stripping_tokenizer,
+                     save_enumerable_lm)
 from word_predictors.contextual_surprisal import load_causal_lm
 from word_predictors.unigram_surprisal import (complete_word_count, expected_occurrences,
-                                               sample_strings, unigram_surprisal)
+                                               sample_strings, unigram_surprisal, word_boundaries)
 
 EOS = ENUMERABLE_VOCAB["<|endoftext|>"]
 WORD_START_IDS = {i for token, i in ENUMERABLE_VOCAB.items() if token.startswith("Ġ")}
+# A word ends before a space-initial token, punctuation, or EOS.
+RIGHT_BOUNDARY_IDS = WORD_START_IDS | {ENUMERABLE_VOCAB["."], EOS}
+TOKEN_TEXT = {i: token.replace("Ġ", " ") for token, i in ENUMERABLE_VOCAB.items()}
 MAX_TOKENS = 4
 # Canonical tokenizations at the start of a string and after a space.
 WORD_TOKENS = {
     "a": (["a"], ["Ġa"]),
     "ab": (["a", "b"], ["Ġa", "b"]),
-    "ba.": (["b", "a", "."], ["Ġb", "a", "."]),
+    "ba": (["b", "a"], ["Ġb", "a"]),
 }
 
 
@@ -58,7 +62,7 @@ def ids(tokens):
 
 def literal_occurrences(string, word):
     """Occurrences of the word's canonical tokens in string, starting a word
-    and followed by a word-start token or EOS."""
+    and followed by a right-boundary token."""
     start_form, space_form = (ids(form) for form in WORD_TOKENS[word])
     count = 0
     for position in range(len(string)):
@@ -66,17 +70,25 @@ def literal_occurrences(string, word):
         for form in forms:
             end = position + len(form)
             if (string[position:end] == form and end < len(string)
-                    and (string[end] == EOS or string[end] in WORD_START_IDS)):
+                    and string[end] in RIGHT_BOUNDARY_IDS):
                 count += 1
     return count
 
 
 def literal_word_count(string):
-    """Words in string that are followed by a word-start token or EOS."""
-    tokens = string[:-1] if string[-1] == EOS else string
-    starts = [i for i, token in enumerate(tokens) if i == 0 or token in WORD_START_IDS]
-    complete = len(starts) if string[-1] == EOS else len(starts) - 1
-    return max(complete, 0)
+    """Words in string: spans from a word start (string start or space-initial
+    token) to the next right-boundary token, which must be in the string, and
+    whose text, after its leading space, starts with neither punctuation nor
+    nothing."""
+    count = 0
+    for start, token in enumerate(string):
+        if token == EOS or not (start == 0 or token in WORD_START_IDS):
+            continue
+        ends = [i for i in range(start + 1, len(string)) if string[i] in RIGHT_BOUNDARY_IDS]
+        text = "".join(TOKEN_TEXT[t] for t in string[start:ends[0]]).lstrip() if ends else ""
+        if text and text[0] != ".":
+            count += 1
+    return count
 
 
 @pytest.fixture(scope="module")
@@ -134,13 +146,18 @@ def test_marginalized_count_is_unbiased(enumerable_lm, exact, word):
 @pytest.mark.parametrize("string, expected", [
     ([EOS], 0),
     (ids(["a", "Ġb"]) + [EOS], 2),
-    (ids(["a", "Ġb", "b", "."]), 1),     # cut off at MAX_TOKENS: the last word is incomplete
-    (ids(["a", ".", "Ġb"]) + [EOS], 2),  # "a." and "b"
-    (ids(["Ġ", "a", "b", "."]), 0),
+    (ids(["a", "Ġb", "b"]), 1),          # cut off at MAX_TOKENS: the last word is incomplete
+    (ids(["a", "Ġb", "b", "."]), 2),     # "bb" is complete: punctuation ends it
+    (ids(["a", ".", "Ġb"]) + [EOS], 2),  # "a" and "b"
+    (ids(["Ġ", "a", "b", "."]), 1),      # " ab", non-canonical tokens
+    (ids(["Ġ", "."]) + [EOS], 0),        # a space and punctuation are not words
+    (ids(["Ġ", "Ġa"]) + [EOS], 1),
+    (ids([".", "a", "Ġb"]) + [EOS], 1),  # ".a" starts with punctuation
 ])
 def test_complete_word_count(enumerable_lm, string, expected):
     tokenizer, _ = enumerable_lm
-    assert complete_word_count(string, tokenizer) == expected == literal_word_count(string)
+    boundaries = word_boundaries(tokenizer)
+    assert complete_word_count(string, tokenizer, boundaries) == expected == literal_word_count(string)
 
 
 def test_samples_follow_seed(enumerable_lm):
@@ -196,3 +213,27 @@ def test_real_model_gives_frequent_word_lower_surprisal(model_name):
 
     the, dinosaurs = (row["unigram_surprisal"] for row in rows)
     assert 0 < the < dinosaurs < math.inf
+
+
+def test_right_boundaries_are_spaces_newlines_punctuation_and_eos_not_apostrophes():
+    tokenizer = make_tokenizer()
+    vocab = tokenizer.get_vocab()
+
+    right_boundary_ids = word_boundaries(tokenizer).right_boundary_ids
+
+    for token in ["Ġcat", "Ġ", "Ċ", ".", ",", "!", "\"", "<|endoftext|>"]:
+        assert vocab[token] in right_boundary_ids, token
+    for token in ["cat", "s", "'", "-"]:
+        assert vocab[token] not in right_boundary_ids, token
+
+
+def test_word_with_outer_punctuation_raises(enumerable_lm):
+    tokenizer, model = enumerable_lm
+    with pytest.raises(ValueError, match="punctuation"):
+        unigram_surprisal(["a."], tokenizer, model, n_samples=10, max_tokens=3, seed=0)
+
+
+def test_word_containing_a_word_boundary_raises(enumerable_lm):
+    tokenizer, model = enumerable_lm
+    with pytest.raises(ValueError, match="boundary"):
+        unigram_surprisal(["a.b"], tokenizer, model, n_samples=10, max_tokens=3, seed=0)

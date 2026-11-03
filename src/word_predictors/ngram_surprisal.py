@@ -16,11 +16,7 @@ counts are in the output.
 import math
 from collections import defaultdict
 
-PUNCTUATION = ".,;:!?\"'()‘’“”"
-
-
-def strip_punctuation(word):
-    return word.strip(PUNCTUATION)
+from word_predictors.punctuation import strip_punctuation
 
 
 def story_sentences(word_rows):
