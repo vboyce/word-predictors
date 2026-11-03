@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "word-predictors"
+version = "0.1.0"
+description = "Word-level predictors of reading time from causal LMs and corpus counts"
+requires-python = "==3.12.*"
+# Pinned to the versions in kid-maze-passages/.venv, the first caller.
+dependencies = [
+    "torch==2.14.1",
+    "transformers==5.19.0",
+    "tokenizers==0.23.3",
+    "numpy==2.5.4",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: loads a real model from Hugging Face or calls a live API (deselected by script/test_fast)",
+]
