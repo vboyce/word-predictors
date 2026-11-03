@@ -41,6 +41,33 @@ maybe it's in a per-budget subfolder) and the BabyLM baselines (repo names not c
 Word-boundary detection for the unigram estimator must handle whichever schemes these use, and
 fail loudly on a tokenizer it doesn't recognize.
 
+## Unigram surprisal (implemented, too slow for real runs yet)
+
+`word_predictors.unigram_surprisal.unigram_surprisal(words, tokenizer, model, n_samples,
+max_tokens, seed)`. Definitions as built (check these):
+- A word starts at the start of a string or at a Ġ-token, and ends before the next Ġ-token or
+  EOS (Hopton App. C). So **attached punctuation is part of the word**: "sat." is not an
+  occurrence of "sat". Whether to pass words with or without punctuation, or to make punctuation
+  a right boundary (as planned for n-grams), is **still open**.
+- At the start of a sampled string the word may appear with or without a leading space; both
+  canonical forms are counted.
+- Strings cut off at `max_tokens` have an incomplete last word: it counts in neither the
+  numerator nor the denominator. The word plus its boundary token must fit in `max_tokens`.
+- Denominator: the sample mean of complete words per string (not marginalized).
+- Sampling is plain ancestral sampling, not `model.generate` (whose generation-config defaults,
+  e.g. top_k, would change the distribution).
+- Only tokenizers with Ġ-marked spaces; anything else raises.
+
+Tests: exact unbiasedness of the marginalized count against enumerating every string from a
+7-token model, and convergence to the exact surprisal (error < 1 bootstrap SE at N = 2000 and
+20000).
+
+**Cost, to fix before real runs:** one forward pass per (sample, prefix, word): N × L × W
+sequences. On CPU, 20 samples × 50 tokens × 2 words took 3–5 minutes with GPT-2/Pythia-70m;
+N = 500, L = 50, ~400 words would take days. Options: one pass per sampled string gives every
+word's first-token probability at every prefix at once; only multi-token words and the
+boundary after each word need extra passes, which can reuse the sample's KV cache.
+
 ## Contextual surprisal (implemented)
 
 `word_predictors.contextual_surprisal.contextual_surprisal(word_rows, tokenizer, model,

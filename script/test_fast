@@ -4,4 +4,4 @@
 set -e
 trap 'rc=$?; command -v prove_it >/dev/null 2>&1 && prove_it record --name fast-tests --result $rc' EXIT
 cd "$(dirname "$0")/.."
-.venv/bin/pytest -q -m "not slow"
+nice -n 15 .venv/bin/pytest -q -m "not slow"

@@ -4,11 +4,11 @@ import math
 from pathlib import Path
 
 import pytest
-from tokenizers import Tokenizer, models, normalizers, pre_tokenizers
 from transformers import (AutoModelForCausalLM, AutoTokenizer, GPT2Config, GPTNeoXConfig,
-                          PretrainedConfig, PreTrainedTokenizerFast)
+                          PretrainedConfig)
 
-from tiny_lm import MAX_POSITIONS, hand_surprisal, save_tiny_lm
+from tiny_lm import (MAX_POSITIONS, hand_surprisal, make_whitespace_stripping_tokenizer,
+                     save_tiny_lm)
 from word_predictors.contextual_surprisal import (context_window, contextual_surprisal,
                                                       load_causal_lm)
 
@@ -125,13 +125,7 @@ def test_tokenizer_without_bos_raises(tiny_lm):
 
 def test_word_by_word_tokenization_differing_from_whole_text_raises(tiny_lm):
     _, model = tiny_lm
-    # Strips leading whitespace from its input, so " cat" encoded alone is
-    # "cat", but in running text it is " cat".
-    vocab = {"<s>": 0, "<unk>": 1, "The": 2, " cat": 3, "cat": 4}
-    backend = Tokenizer(models.WordLevel(vocab, unk_token="<unk>"))
-    backend.normalizer = normalizers.Strip()
-    backend.pre_tokenizer = pre_tokenizers.Split(" ", behavior="merged_with_next")
-    stripping = PreTrainedTokenizerFast(tokenizer_object=backend, bos_token="<s>", unk_token="<unk>")
+    stripping = make_whitespace_stripping_tokenizer()
     rows = [
         {"topic": "t", "sentence": "1", "word_position": "1", "word": "The"},
         {"topic": "t", "sentence": "1", "word_position": "2", "word": "cat"},
