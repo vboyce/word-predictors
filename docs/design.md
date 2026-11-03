@@ -93,7 +93,7 @@ required. Choices made in code (check these):
 - A word with unigram count 0 gets no surprisal (None), with its zero counts in the output;
   the zero-count rule stays open (below).
 
-## infini-gram (checked 2026-11-03; client not written, decision needed)
+## infini-gram (client implemented: option 2)
 
 From the API docs (infini-gram.readthedocs.io/en/latest/api.html) and a few live queries:
 - The Pile-train index is `v4_piletrain_llama`: 383.3B tokens, tokenized with **Llama-2's**
@@ -121,8 +121,27 @@ don't matter for the analysis, so the missed line-initial forms are acceptable):
 3. As 2, plus the no-▁ form after a newline (and other whitespace/quote tokens): more
    queries per n-gram, and the left-context rule has to be spelled out.
 Each needed n-gram is one `ntd` query (`prompt_cnt` is its exact count): ~3000 queries for the
-two kid-maze stories at n ≤ 5. The local-corpus counts should then use the same boundary rule
-(now: whitespace-separated, outer punctuation stripped).
+two kid-maze stories at n ≤ 5.
+
+As built (`word_predictors.infini_gram.infini_gram_counts(ngrams, index)`): whole-word count =
+`prompt_cnt` minus the continuations that stay inside the word. A continuation starts a new
+word if its token starts with ▁, whitespace (character or byte token), or punctuation other
+than an apostrophe, or is `</s>`: the unigram estimator's right boundary. Byte tokens ≥ 0x80
+(pieces of curly quotes, dashes, non-ASCII letters) are not boundaries. Example (recorded,
+exact): "the cat sat" occurs 532 times; the one continuation inside a word is `';` (a closing
+quote, missed by the apostrophe rule), so the count is 531. Returns the counts and, per
+n-gram, the token-sequence count and the `approx` flag. Any API error raises with the query; a
+query whose first token lacks ▁ raises. No retries, no cache of responses yet.
+
+Boundary rules compared: the unigram estimator and infini-gram need a space before the word
+(left) and whitespace/punctuation after it (right). Local corpus counts strip outer punctuation
+on both sides, so they also count '"The' and line-initial words. Not yet made identical.
+
+**Open: total words for the Pile.** Stupid Backoff's unigram level is count(w) / total words,
+and the index reports total *tokens* (383.3B), not words. Using tokens shifts unigram-level
+scores by a constant, but only for n-grams that back off to the unigram, so it isn't a
+harmless offset. Options: an estimate from the share of ▁-initial tokens (one `ntd` query on
+the empty prompt, sampled from 1000 tokens), or a published Pile word count.
 
 ## Contextual surprisal (implemented)
 
