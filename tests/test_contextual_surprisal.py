@@ -156,3 +156,9 @@ def test_load_causal_lm_from_subfolder(tmp_path):
     assert model.config.n_positions == MAX_POSITIONS
     assert not model.training
     assert tokenizer.bos_token == "<|endoftext|>"
+
+
+def test_load_causal_lm_from_missing_subfolder_raises(tmp_path):
+    save_tiny_lm(tmp_path / "seed0" / "rung1M")
+    with pytest.raises(FileNotFoundError, match="no_such_rung"):
+        load_causal_lm(str(tmp_path), subfolder="seed0/no_such_rung")

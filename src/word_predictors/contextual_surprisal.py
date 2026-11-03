@@ -11,6 +11,7 @@ it, so it has at least (context window - window_stride) tokens of context.
 
 import math
 from collections import defaultdict
+from pathlib import Path
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -23,6 +24,11 @@ def load_causal_lm(model_name, subfolder=""):
     """Return (tokenizer, model) for a Hugging Face causal LM, in eval mode.
     subfolder is for repos holding several models, e.g.
     mcxfrank/childes-gpt2-ladder's "development/seed42/rung24M"."""
+    # For a missing subfolder, transformers raises misleading errors ("couldn't
+    # instantiate the backend tokenizer", "unrecognized model"); local paths can be checked first.
+    local_folder = Path(model_name) / subfolder
+    if Path(model_name).is_dir() and not local_folder.is_dir():
+        raise FileNotFoundError(f"no model folder {local_folder}")
     tokenizer = AutoTokenizer.from_pretrained(model_name, subfolder=subfolder)
     model = AutoModelForCausalLM.from_pretrained(model_name, subfolder=subfolder)
     model.eval()

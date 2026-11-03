@@ -123,7 +123,7 @@ two kid-maze stories at n ≤ 5. The local-corpus counts should then use the sam
 ## Contextual surprisal (implemented)
 
 `word_predictors.contextual_surprisal.contextual_surprisal(word_rows, tokenizer, model,
-window_stride)`, with `load_causal_lm(model_name)`. `window_stride` is required; the context
+window_stride)`, with `load_causal_lm(model_name, subfolder="")` (`subfolder` for repos holding several models). `window_stride` is required; the context
 window comes from the model config (`n_positions` or `max_position_embeddings`; error if
 neither, or if they disagree). Errors on: no BOS token, word-by-word tokenization that differs
 from whole-story tokenization, empty words or words containing whitespace, duplicate
@@ -137,7 +137,7 @@ A word counts only if it starts at a word boundary and is followed by one (Hopto
 Michaelov & Levy's code does not enforce the right boundary: it sends text to the infini-gram
 API, which counts token sequences, so "cat" also counts the start of "category". Options for
 the Pile: use infini-gram's next-token-distribution query to get the share of continuations
-that start a new word (to check: whether that query is exact or sampled for frequent prefixes).
+that start a new word (sampled for frequent prefixes; see "infini-gram" above for the options).
 Local corpora: count whole words directly.
 
 Attached punctuation: stripped for n-gram counts (like `length` and `zipf_frequency` now);
