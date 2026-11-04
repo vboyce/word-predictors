@@ -9,7 +9,7 @@ Input: stories as words in order (columns `topic, sentence, word_position, word`
 
 1. **Contextual surprisal** (bits) from a Hugging Face causal LM, with the story so far as
    context. Summed over the word's tokens, plus `n_tokens`. Same definition as the current
-   `kid-maze-passages/analysis/word_predictors.py`, generalized to any causal LM. The context
+   `kid-maze-passages/analysis/gpt2_word_predictors.py`, generalized to any causal LM. The context
    window comes from the model config; no default.
 2. **Unigram surprisal from the same LM** (bits): Hopton et al. 2026's marginalized Monte Carlo
    estimator, canonical-tokenization-only ("MMC Approx."):
@@ -236,7 +236,8 @@ punctuation stripped, context within sentences, zero counts left visible (open),
 
 Callers (kid-maze-passages): `analysis/pythia_surprisal.py` (contextual surprisal, all sizes;
 `analysis/cluster/pythia_surprisal.slurm` on Engaging) and `analysis/pile_ngram_surprisal.py`.
-Both must run with `python -P`: kid-maze's `analysis/word_predictors.py` shadows the package.
+(kid-maze's GPT-2 script was renamed `analysis/gpt2_word_predictors.py` so it no longer shadows
+the package.)
 transformers 5 configs have no `_commit_hash`; the Pythia caller loads from
 `snapshot_download(...)`, whose folder name is the commit.
 

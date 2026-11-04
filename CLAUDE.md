@@ -4,7 +4,8 @@ Word-level predictors of reading time for psycholinguistic studies, from
 causal language models and corpus counts: contextual surprisal, unigram
 surprisal estimated from the same LM (Hopton et al. 2026), and n-gram
 surprisal from the LM's training corpus (Michaelov & Levy 2026). A library
-that study repos call (first caller: `kid-maze-passages/analysis/word_predictors.py`).
+that study repos call (first callers: `kid-maze-passages/analysis/pythia_surprisal.py` and
+`pile_ngram_surprisal.py`).
 
 Design and open decisions: `docs/design.md`.
 
