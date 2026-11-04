@@ -142,7 +142,7 @@ Boundary rules compared: the unigram estimator and infini-gram need a space befo
 (left) and whitespace/punctuation after it (right). Local corpus counts strip outer punctuation
 on both sides, so they also count '"The' and line-initial words. Not yet made identical.
 
-**Total words for the Pile (estimate; open whether to use it).** Stupid Backoff's unigram
+**Total words for the Pile (estimate; used, decided 2026-11-04).** Stupid Backoff's unigram
 level is count(w) / total words, and the index reports total *tokens* (383.3B), not words.
 Michaelov & Levy divide by total tokens. Using tokens adds a constant to unigram-level scores,
 but only for n-grams that back off to the unigram, so it isn't a harmless offset.
@@ -224,6 +224,22 @@ punctuation stripped, context within sentences, zero counts left visible (open),
    only its unigram; the second word at most a bigram, and so on. (Contextual LM surprisal
    still uses the story so far.)
 
+## Decisions (2026-11-04)
+
+3. **Pythia first**: standard (not deduped, since the infini-gram index is the standard Pile),
+   sizes 14m, 31m, 70m, 160m, 410m, 1b, 1.4b, 2.8b, final checkpoint (main branch) only.
+   CHILDES seeds postponed.
+4. **Pile unigram denominator: the ≈175B-word estimate.** Only relative frequency matters.
+5. Stupid Backoff α = 0.4, orders 1–5, as Michaelov & Levy.
+6. infini-gram runs wrap `post_json` in `paced_post` (1 query/s) and `cached_post` (JSON lines
+   of successful responses; errors aren't cached, so a rerun retries them and resumes).
+
+Callers (kid-maze-passages): `analysis/pythia_surprisal.py` (contextual surprisal, all sizes;
+`analysis/cluster/pythia_surprisal.slurm` on Engaging) and `analysis/pile_ngram_surprisal.py`.
+Both must run with `python -P`: kid-maze's `analysis/word_predictors.py` shadows the package.
+transformers 5 configs have no `_commit_hash`; the Pythia caller loads from
+`snapshot_download(...)`, whose folder name is the commit.
+
 ## Still open
 
 1. **Zero counts.** Recommendation: don't pick a rule yet. The first n-gram run writes raw
@@ -232,12 +248,8 @@ punctuation stripped, context within sentences, zero counts left visible (open),
    probably won't happen for these words; in CHILDES (24M words) words like "Tyrannosaurus"
    may be unseen. If only a few, leaving them undefined (dropped from n-gram fits) is cleanest;
    Michaelov & Levy's count-1 rule puts every unseen word at the same floor value.
-2. **Pythia.** Recommendation:
-   - standard (not deduped): the infini-gram Pile index is the standard Pile train set, so
-     standard Pythia is the one whose training data the counts match;
-   - sizes 14m through 2.8b first (cheap; Shain 2024 and de Varda 2026 find small models fit
-     behavior best), 6.9b and 12b only if the trend calls for it;
-   - training checkpoints later, as a separate question (training tokens as a stand-in for
-     amount of experience, as in Michaelov & Levy).
+2. **Pythia**: decided 2026-11-04 (above). Still open: 6.9b and 12b if the trend calls for it;
+   training checkpoints (training tokens as a stand-in for amount of experience, as in
+   Michaelov & Levy).
 3. Multi-token words: report summed surprisal (lab default) and also fit with them excluded
    (Boyce & Levy 2023)? That's a study-repo choice; this library just reports `n_tokens`.

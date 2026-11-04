@@ -21,7 +21,7 @@ CONTEXT_WINDOW_ATTRIBUTES = ["n_positions", "max_position_embeddings"]
 
 
 def load_causal_lm(model_name, subfolder=""):
-    """Return (tokenizer, model) for a Hugging Face causal LM, in eval mode.
+    """Return (tokenizer, model) for a Hugging Face causal LM, in eval mode and float32.
     subfolder is for repos holding several models, e.g.
     mcxfrank/childes-gpt2-ladder's "development/seed42/rung24M"."""
     # For a missing subfolder, transformers raises misleading errors ("couldn't
@@ -30,7 +30,10 @@ def load_causal_lm(model_name, subfolder=""):
     if Path(model_name).is_dir() and not local_folder.is_dir():
         raise FileNotFoundError(f"no model folder {local_folder}")
     tokenizer = AutoTokenizer.from_pretrained(model_name, subfolder=subfolder)
-    model = AutoModelForCausalLM.from_pretrained(model_name, subfolder=subfolder)
+    # float32 whatever the stored precision: transformers loads a model in the
+    # dtype it was saved in (Pythia: fp16), and fp16 results on CPU differ
+    # between processors by up to 1.5 bits per word.
+    model = AutoModelForCausalLM.from_pretrained(model_name, subfolder=subfolder, dtype=torch.float32)
     model.eval()
     return tokenizer, model
 

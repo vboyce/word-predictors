@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from word_predictors.infini_gram import (PILE_TRAIN_INDEX, InfiniGramError, infini_gram_counts,
-                                         starts_new_word, total_word_count, whole_word_count,
-                                         word_start_terms)
+from word_predictors.infini_gram import (PILE_TRAIN_INDEX, InfiniGramError, cached_post,
+                                         infini_gram_counts, paced_post, starts_new_word,
+                                         total_word_count, whole_word_count, word_start_terms)
 
 RECORDED = json.loads((Path(__file__).parent / "data" / "infini_gram_responses.json").read_text())
 
@@ -128,3 +128,83 @@ def test_total_word_count_error_raises():
 
     with pytest.raises(InfiniGramError, match="query too long"):
         total_word_count(PILE_TRAIN_INDEX, VOCAB, post=post, terms_per_query=2, tokens_per_query=3)
+
+
+class FakeClock:
+    """A clock that only moves when sleep() is called or time is advanced."""
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def time(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+def counting_post(status=200, response=None):
+    """A post function that records its payloads and always gives the same answer."""
+    def post(payload):
+        post.payloads.append(payload)
+        return status, response if response is not None else {"count": len(post.payloads)}
+    post.payloads = []
+    return post
+
+
+def test_paced_post_waits_out_the_rest_of_the_interval():
+    clock = FakeClock()
+    post = paced_post(counting_post(), min_interval=1.0, clock=clock.time, sleep=clock.sleep)
+    post({"q": 1})
+    clock.now += 0.25
+    post({"q": 2})
+    assert clock.sleeps == [0.75]
+
+
+def test_paced_post_does_not_wait_once_the_interval_has_passed():
+    clock = FakeClock()
+    post = paced_post(counting_post(), min_interval=1.0, clock=clock.time, sleep=clock.sleep)
+    post({"q": 1})
+    clock.now += 2.0
+    post({"q": 2})
+    assert clock.sleeps == []
+
+
+def test_paced_post_rejects_a_non_positive_interval():
+    with pytest.raises(ValueError, match="min_interval"):
+        paced_post(counting_post(), min_interval=0)
+
+
+def test_cached_post_answers_a_repeated_query_from_the_cache(tmp_path):
+    inner = counting_post()
+    post = cached_post(inner, tmp_path / "cache.jsonl")
+    assert post({"query": "the cat"}) == (200, {"count": 1})
+    assert post({"query": "the cat"}) == (200, {"count": 1})
+    assert inner.payloads == [{"query": "the cat"}]
+
+
+def test_cached_post_keeps_its_cache_across_runs(tmp_path):
+    cache = tmp_path / "cache.jsonl"
+    cached_post(counting_post(), cache)({"query": "the cat", "index": "x"})
+    inner = counting_post()
+    # same payload with its keys in another order
+    assert cached_post(inner, cache)({"index": "x", "query": "the cat"}) == (200, {"count": 1})
+    assert inner.payloads == []
+
+
+def test_cached_post_does_not_cache_errors(tmp_path):
+    cache = tmp_path / "cache.jsonl"
+    cached_post(counting_post(status=403, response={"error": "Forbidden"}), cache)({"query": "a"})
+    cached_post(counting_post(response={"error": "bad query"}), cache)({"query": "a"})
+    inner = counting_post()
+    cached_post(inner, cache)({"query": "a"})
+    assert inner.payloads == [{"query": "a"}]
+
+
+def test_cached_post_counts_with_the_recorded_trigram(tmp_path):
+    post = cached_post(recorded_post, tmp_path / "cache.jsonl")
+    infini_gram_counts({("the", "cat", "sat")}, PILE_TRAIN_INDEX, post=post)
+    counts, _ = infini_gram_counts({("the", "cat", "sat")}, PILE_TRAIN_INDEX,
+                                   post=cached_post(counting_post(), tmp_path / "cache.jsonl"))
+    assert counts == {("the", "cat", "sat"): 531}

@@ -4,6 +4,7 @@ import math
 from pathlib import Path
 
 import pytest
+import torch
 from transformers import (AutoModelForCausalLM, AutoTokenizer, GPT2Config, GPTNeoXConfig,
                           PretrainedConfig)
 
@@ -156,6 +157,18 @@ def test_load_causal_lm_from_subfolder(tmp_path):
     assert model.config.n_positions == MAX_POSITIONS
     assert not model.training
     assert tokenizer.bos_token == "<|endoftext|>"
+
+
+def test_load_causal_lm_loads_half_precision_weights_in_float32(tmp_path):
+    # Pythia is stored in fp16; transformers 5 would load it as fp16, whose CPU
+    # results differ by up to 1.5 bits per word between processors (2026-11-04).
+    save_tiny_lm(tmp_path)
+    _, model = load_causal_lm(str(tmp_path))
+    model.half().save_pretrained(tmp_path)
+
+    _, reloaded = load_causal_lm(str(tmp_path))
+
+    assert reloaded.dtype == torch.float32
 
 
 def test_load_causal_lm_from_missing_subfolder_raises(tmp_path):

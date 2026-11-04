@@ -15,13 +15,17 @@ is a space: the query text is tokenized with a leading ▁, so occurrences
 after a newline (no ▁) are not counted.
 
 The Pile-train index is tokenized with Llama-2's tokenizer. No retries: any
-API error stops the run with the query that failed.
+API error stops the run with the query that failed. For long runs, wrap
+post_json in paced_post (a burst of unpaced queries got HTTP 403 on
+2026-11-03) and cached_post (so a rerun after an error resumes).
 """
 
 import json
 import re
+import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 from word_predictors.punctuation import APOSTROPHES, PUNCTUATION
 
@@ -48,6 +52,52 @@ def post_json(payload):
     except urllib.error.HTTPError as error:
         # The API explains errors in a JSON body.
         return error.code, json.loads(error.read())
+
+
+def paced_post(post, min_interval, clock=time.monotonic, sleep=time.sleep):
+    """post, but each call starts at least min_interval seconds after the
+    previous one started."""
+    if min_interval <= 0:
+        raise ValueError(f"min_interval must be positive, got {min_interval}")
+    last_start = None
+
+    def paced(payload):
+        nonlocal last_start
+        if last_start is not None:
+            wait = last_start + min_interval - clock()
+            if wait > 0:
+                sleep(wait)
+        last_start = clock()
+        return post(payload)
+    return paced
+
+
+def cached_post(post, cache_path):
+    """post, but answered from cache_path (JSON lines of payload, status,
+    response) when the same payload was answered before. Only successful
+    responses are cached, so failed queries are retried on the next run."""
+    cache_path = Path(cache_path)
+    cache = {}
+    if cache_path.exists():
+        for line in cache_path.read_text().splitlines():
+            entry = json.loads(line)
+            cache[payload_key(entry["payload"])] = (entry["status"], entry["response"])
+
+    def cached(payload):
+        key = payload_key(payload)
+        if key in cache:
+            return cache[key]
+        status, response = post(payload)
+        if status == 200 and "error" not in response:
+            cache[key] = (status, response)
+            with cache_path.open("a") as f:
+                f.write(json.dumps({"payload": payload, "status": status, "response": response}) + "\n")
+        return status, response
+    return cached
+
+
+def payload_key(payload):
+    return json.dumps(payload, sort_keys=True)
 
 
 def infini_gram_counts(ngrams, index, post=post_json):
