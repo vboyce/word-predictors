@@ -104,6 +104,13 @@ max(s, τ)) fails both.
   k = 256: 0.003, 0.014, 0.22 bits (193 s). Compare the seed-to-seed sampling spread at
   N = 100: median 0.21 bits. The continuation cost is ~k × W whatever N is, so large N costs
   mostly sampling plus one forward pass per string.
+- **H100 (Engaging, 2026-11-06), pythia-70m, 325 words, L = 256** (kid-maze jobs 28113954–58):
+  exact, N = 100, seed 1: 78 s (old code: 20,279 s); same values as the old seed-1 file
+  (|difference| median 0.0000, max 0.0006 bits), so sampling was identical on the same GPU type.
+  Against that exact run, same strings: k = 256 median 0.035, 90th pct 0.10, max 0.69 bits
+  (6.5 s); k = 1024 median 0.008, 90th pct 0.029, max 0.27 bits (15 s). Seed 1 vs 2:
+  N = 100 (old) median 0.21, max 2.05 bits; N = 1000, k = 1024 median 0.093, 90th pct 0.39,
+  max 1.53 bits (24 s each). Sampling noise, not k, dominates.
 Run on Engaging.
 
 ## N-gram surprisal from local counts (implemented; infini-gram not yet)
