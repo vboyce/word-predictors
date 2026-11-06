@@ -71,12 +71,35 @@ Tests: exact unbiasedness of the marginalized count against enumerating every st
 7-token model, and convergence to the exact surprisal (error < 1 bootstrap SE at N = 2000 and
 20000).
 
-**Cost.** Each prefix's KV cache is built once per string and scores a batch of words at once
-(2× faster than one pass per (sample, prefix, word): GPT-2, 4 samples × 12 tokens × 20 words,
-22.9 s → 12.0 s on 2 CPU threads, same values to 2e-5 bits). What remains is intrinsic: a
-full-vocabulary distribution at every (prefix, word, word token), about N × L × W × (k + 1)
-rows of the output layer. Rough estimate for GPT-2 at N = 500, L = 50, W = 400: ~1e15
-multiply-adds, i.e. days on a laptop CPU, minutes to tens of minutes on a GPU (not measured).
+**Cost (rewritten 2026-11-06; see `docs/unigram_speed_handoff.md` for the old diagnosis).**
+One batched forward pass per string gives every word's first-token probability at every
+prefix. The rest of each word plus its boundary token is scored for many (prefix, word) pairs
+in one pass over the string: the forms are packed after the string with a 4D attention mask
+(each form sees only its own prefix and itself) and explicit position ids. No KV-cache copies,
+no per-word Python scoring, the empty prefix computed once. Needs `sdpa` or `eager` attention
+(anything else raises). Same values as the old code (test against a copy of it in
+`tests/reference_unigram_surprisal.py`); on pythia-70m the two differ by up to 1.4e-3 bits
+(float32 noise: Pythia's logits are ~1000 in size).
+- pythia-70m, 325 kid-maze words, CPU (12 threads): 2 strings × 32 tokens, old 418.6 s → new
+  39.4 s. 4 strings at L = 256 (820 prefixes): 591 s, ~0.7 s per prefix, about what the old
+  code took per prefix on an H100 (20,279 s / ~25,600). Not yet timed on a GPU.
+- The exact cost is still ~N × L × W × (form length + 1) vocabulary rows.
+
+**Priority sampling (`continuations_per_word=k`; 2026-11-06).** Hopton et al. App. I, Alg. 3
+(their "Priority MMC Approx."), one stratum. The first-token sweep stays exhaustive; the rest
+of the word and its boundary are scored only at the k prefixes with the largest s / u
+(s = first-token probability, u ~ U(0, 1]), weighted by max(s, τ), τ the (k+1)-th largest
+s / u. Unbiased for the same sum as the exact path. We do **not** take Hopton's other two Approx.
+shortcuts (only prefixes whose sampled next token is word-initial; no right-boundary factor):
+both change the estimand. The u's use a generator seeded with seed + 1,000,003, apart from the
+sampler. Tests: exact when k covers every prefix; mean over 300 seeds within 4 SE of the exact
+total at k = 2; convergence to the enumerated surprisal; a mutation (weights s instead of
+max(s, τ)) fails both.
+- pythia-70m, same 4 strings (820 prefixes), error vs exact over 3 priority seeds,
+  |log2(estimate/exact)|: k = 64: median 0.030, 90th pct 0.116, max 0.72 bits (51 s);
+  k = 256: 0.003, 0.014, 0.22 bits (193 s). Compare the seed-to-seed sampling spread at
+  N = 100: median 0.21 bits. The continuation cost is ~k × W whatever N is, so large N costs
+  mostly sampling plus one forward pass per string.
 Run on Engaging.
 
 ## N-gram surprisal from local counts (implemented; infini-gram not yet)
