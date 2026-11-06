@@ -49,6 +49,10 @@ CONTINUATION_TOKENS_PER_PASS = 1024
 # Attention implementations that apply a custom 4D attention mask (flash
 # attention, for one, doesn't).
 MASKABLE_ATTENTION = ("eager", "sdpa")
+# Architectures checked to give the same values packed as in plain forward
+# passes. Not GPT-Neo: its local attention layers mask by distance in the
+# packed sequence, not by position id.
+PACKABLE_MODEL_TYPES = ("gpt2", "gpt_neox")
 PRIORITY_SEED_OFFSET = 1_000_003
 
 # Token ids that can start a word, and that end the word before them.
@@ -71,7 +75,7 @@ def unigram_surprisal(words, tokenizer, model, n_samples, max_tokens, seed,
     if not 0 < max_tokens < window:
         raise ValueError(f"max_tokens must be between 1 and {window - 1} "
                          f"(BOS plus max_tokens must fit in the context window), got {max_tokens}")
-    check_attention_takes_custom_masks(model)  # fail before sampling, not after
+    check_model_can_be_packed(model)  # fail before sampling, not after
     boundaries = word_boundaries(tokenizer)
     for word in words:
         canonical_forms(word, tokenizer, boundaries)
@@ -79,6 +83,9 @@ def unigram_surprisal(words, tokenizer, model, n_samples, max_tokens, seed,
     strings = sample_strings(model, tokenizer.bos_token_id, tokenizer.eos_token_id,
                              n_samples, max_tokens, seed)
     total_words = sum(complete_word_count(string, tokenizer, boundaries) for string in strings)
+    if total_words == 0:
+        raise ValueError(f"the {n_samples} sampled strings have no complete words "
+                         f"(max_tokens={max_tokens}): no unigram probabilities to estimate")
     if continuations_per_word is None:
         per_string = expected_occurrences(strings, words, tokenizer, model, max_tokens)
         occurrences = {word: sum(totals) for word, totals in per_string.items()}
@@ -182,7 +189,7 @@ def expected_occurrences(strings, words, tokenizer, model, max_tokens):
     """{word: [for each string, the sum over its prefixes of P(word's canonical
     tokens, then a right-boundary token | prefix)]}: the expected number of
     occurrences of each word given each string's prefixes."""
-    check_attention_takes_custom_masks(model)
+    check_model_can_be_packed(model)
     boundaries = word_boundaries(tokenizer)
     forms = [canonical_forms(word, tokenizer, boundaries) for word in words]
     space_forms = [space_form for _, space_form in forms]
@@ -223,7 +230,7 @@ def priority_sampled_occurrences(strings, words, tokenizer, model, max_tokens,
     Unlike Hopton et al.'s Approx. variant, every prefix counts and c_b includes
     the right boundary, so the estimand is the same as expected_occurrences'.
     The empty prefix, the same in every string, is computed exactly."""
-    check_attention_takes_custom_masks(model)
+    check_model_can_be_packed(model)
     boundaries = word_boundaries(tokenizer)
     forms = [canonical_forms(word, tokenizer, boundaries) for word in words]
     space_forms = [space_form for _, space_form in forms]
@@ -400,7 +407,11 @@ def packed_continuation_pass(model, bos_id, string, placements, boundary_index):
         0, placement_of_token, token_log_probs)
 
 
-def check_attention_takes_custom_masks(model):
+def check_model_can_be_packed(model):
+    if model.config.model_type not in PACKABLE_MODEL_TYPES:
+        raise ValueError(
+            f"model type {model.config.model_type!r} is not checked for the packed forward passes "
+            f"this estimator uses (checked: {PACKABLE_MODEL_TYPES})")
     implementation = model.config._attn_implementation
     if implementation not in MASKABLE_ATTENTION:
         raise ValueError(

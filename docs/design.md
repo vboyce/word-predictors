@@ -77,7 +77,11 @@ prefix. The rest of each word plus its boundary token is scored for many (prefix
 in one pass over the string: the forms are packed after the string with a 4D attention mask
 (each form sees only its own prefix and itself) and explicit position ids. No KV-cache copies,
 no per-word Python scoring, the empty prefix computed once. Needs `sdpa` or `eager` attention
-(anything else raises). Same values as the old code (test against a copy of it in
+and a checked architecture: GPT-2 and GPT-NeoX (Pythia), each tested against plain forward
+passes on a tiny random model. Anything else raises. **GPT-Neo (`roneneldan/TinyStories-33M`)
+raises:** its local attention layers mask by distance in the packed sequence, not by position
+id, so packed values would be wrong (found by the done-review, 2026-11-06). TinyStories needs
+another path (e.g. one plain pass per prefix, or a GPT-Neo-aware mask); open. Same values as the old code (test against a copy of it in
 `tests/reference_unigram_surprisal.py`); on pythia-70m the two differ by up to 1.4e-3 bits
 (float32 noise: Pythia's logits are ~1000 in size).
 - pythia-70m, 325 kid-maze words, CPU (12 threads): 2 strings × 32 tokens, old 418.6 s → new

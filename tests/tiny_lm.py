@@ -14,7 +14,8 @@ import math
 
 import torch
 from tokenizers import Tokenizer, decoders, models, normalizers, pre_tokenizers, trainers
-from transformers import GPT2Config, GPT2LMHeadModel, PreTrainedTokenizerFast
+from transformers import (GPT2Config, GPT2LMHeadModel, GPTNeoConfig, GPTNeoForCausalLM,
+                          GPTNeoXConfig, GPTNeoXForCausalLM, PreTrainedTokenizerFast)
 
 TRAINING_TEXT = ["The cat sat. The dog ran. A cat ran. A dog sat."] * 20
 EXTRA_MERGES = 40  # merges beyond the 256 byte tokens and <|endoftext|>
@@ -60,9 +61,13 @@ def make_whitespace_stripping_tokenizer():
     )
 
 
-def save_tiny_lm(directory):
-    """Save the trained tokenizer and a seeded random GPT-2 to directory; return its path."""
-    return save_random_gpt2(make_tokenizer(), directory)
+def save_tiny_lm(directory, architecture="gpt2"):
+    """Save the trained tokenizer and a seeded random model to directory; return
+    its path. architecture: "gpt2" (absolute positions), "gpt_neox" (Pythia's:
+    rotary positions), or "gpt_neo" (TinyStories': local attention layers)."""
+    savers = {"gpt2": save_random_gpt2, "gpt_neox": save_random_gpt_neox,
+              "gpt_neo": save_random_gpt_neo}
+    return savers[architecture](make_tokenizer(), directory)
 
 
 def save_enumerable_lm(directory):
@@ -78,6 +83,31 @@ def save_random_gpt2(tokenizer, directory):
         bos_token_id=tokenizer.bos_token_id, eos_token_id=tokenizer.eos_token_id,
     )
     GPT2LMHeadModel(config).save_pretrained(directory)
+    return str(directory)
+
+
+def save_random_gpt_neox(tokenizer, directory):
+    tokenizer.save_pretrained(directory)
+    torch.manual_seed(0)
+    config = GPTNeoXConfig(
+        vocab_size=len(tokenizer), hidden_size=16, num_hidden_layers=1, num_attention_heads=2,
+        intermediate_size=32, max_position_embeddings=MAX_POSITIONS,
+        bos_token_id=tokenizer.bos_token_id, eos_token_id=tokenizer.eos_token_id,
+    )
+    GPTNeoXForCausalLM(config).save_pretrained(directory)
+    return str(directory)
+
+
+def save_random_gpt_neo(tokenizer, directory):
+    tokenizer.save_pretrained(directory)
+    torch.manual_seed(0)
+    config = GPTNeoConfig(
+        vocab_size=len(tokenizer), hidden_size=16, num_layers=2, num_heads=2,
+        attention_types=[[["global", "local"], 1]], window_size=4,
+        max_position_embeddings=MAX_POSITIONS,
+        bos_token_id=tokenizer.bos_token_id, eos_token_id=tokenizer.eos_token_id,
+    )
+    GPTNeoForCausalLM(config).save_pretrained(directory)
     return str(directory)
 
 

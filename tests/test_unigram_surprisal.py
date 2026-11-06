@@ -285,8 +285,18 @@ def test_first_token_log_probabilities_match_plain_forward_passes(tiny_lm):
                     plain_log_probability(model, context, [token]), abs=1e-5)
 
 
-def test_continuation_log_probabilities_match_plain_forward_passes(tiny_lm):
-    tokenizer, model = tiny_lm
+def load_tiny_lm(directory, architecture):
+    path = save_tiny_lm(directory, architecture)
+    tokenizer = AutoTokenizer.from_pretrained(path)
+    model = AutoModelForCausalLM.from_pretrained(path)
+    model.eval()
+    return tokenizer, model
+
+
+# GPT-2: absolute position embeddings; GPT-NeoX (Pythia): rotary.
+@pytest.mark.parametrize("architecture", ["gpt2", "gpt_neox"])
+def test_continuation_log_probabilities_match_plain_forward_passes(tmp_path, architecture):
+    tokenizer, model = load_tiny_lm(tmp_path, architecture)
     boundary_ids = sorted(word_boundaries(tokenizer).right_boundary_ids)
     string = tokenizer.encode(" The cat sat")
     placements = [(0, tokenizer.encode(" dog")), (1, tokenizer.encode(" sated")),
@@ -334,6 +344,19 @@ def test_expected_occurrences_matches_original_implementation(tiny_lm, monkeypat
 
     for word in TINY_LM_WORDS:
         assert fast[word] == pytest.approx(reference[word], rel=1e-5, abs=1e-12), word
+
+
+def test_model_with_local_attention_raises(tmp_path):
+    # GPT-Neo's local layers mask by distance in the packed sequence, not by position.
+    tokenizer, model = load_tiny_lm(tmp_path, "gpt_neo")
+    with pytest.raises(ValueError, match="gpt_neo"):
+        unigram_surprisal(["cat"], tokenizer, model, n_samples=2, max_tokens=3, seed=0)
+
+
+def test_strings_without_complete_words_raise(enumerable_lm):
+    tokenizer, model = enumerable_lm
+    with pytest.raises(ValueError, match="no complete words"):
+        unigram_surprisal(["a"], tokenizer, model, n_samples=10, max_tokens=1, seed=0)
 
 
 def test_model_with_attention_that_ignores_custom_masks_raises(tiny_lm, monkeypatch):
